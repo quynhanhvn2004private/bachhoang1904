@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>quaquanque's slides box</title>
+<style>
+/* Theme and sizing tokens used across the whole page. */
+:root {
+  --bg-a: #1f1823;
+  --bg-b: #0f1119;
+  --accent: #ffd6df;
+  --metal: #f7f5f0;
+  --film: #111114;
+  --film-hole: #252531;
+  --frame: #efe1dd;
+  --frame-glow: rgba(255, 248, 230, 0.28);
+  --projector-shadow-off: drop-shadow(0 20px 28px rgba(0, 0, 0, 0.45));
+  --projector-shadow-on: drop-shadow(0 0 15px rgba(255, 175, 171, 0.133)) drop-shadow(0 14px 24px rgba(0, 0, 0, 0.38));
+  --projector-col-min: 400px;
+  --projector-col-fluid: 40vw;
+  --projector-col-max: 600px;
+  --projector-size-max: 800px;
+  --card-max-width: 980px;
+  --card-max-height: 620px;
+  --card-mobile-width: 920px;
+  --card-mobile-height: 400px;
+}
+
+/* Make width/height calculations predictable. */
+* { box-sizing: border-box; }
+
+/* Full-screen app with no page scroll. */
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* App background + centered two-panel stage. */
+body {
+  display: grid;
+  place-items: center;
+  background: #000000;
+  color: #1b1b1b;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* "Lights on" visual state (overview mode). */
+body.lights-on {
+  background: #700306;
+  color: rgb(255, 255, 255);
+}
+
+/* Main 2-column layout: projector at left, viewer at right. */
+.stage {
+  width: min(98vw, 1580px);
+  display: grid;
+  grid-template-columns: clamp(var(--projector-col-min), var(--projector-col-fluid), var(--projector-col-max)) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(10px, 2vw, 26px);
+}
+
+/* Container for projector button and usage hint text. */
+.projector-panel {
+  width: 100%;
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
+/* Clickable projector image that doubles as light toggle. */
+#projector-toggle {
+  --wheel-size: 50%;
+  --wheel-x: 65%;
+  --wheel-y: 54%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  width: 100%;
+  max-width: var(--projector-size-max);
+  justify-self: end;
+  filter: var(--projector-shadow-off);
+  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+  position: relative;
+  display: block;
+}
+
+#projector-toggle img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Small lift effect on hover for tactile feel. */
+#projector-toggle:hover {
+  transform: translateY(-3px);
+}
+
+/* Different shadow when projector is in "on" state. */
+#projector-toggle.is-on {
+  filter: var(--projector-shadow-on);
+}
+
+/* Instruction text under projector image. */
+#projector-hint {
+  margin: 0;
+  width: min(100%, 2484px);
+  text-align: center;
+  font-size: clamp(0.82rem, 1.35vw, 1.05rem);
+  color: rgba(255, 241, 226, 0.92);
+  letter-spacing: 0.015em;
+}
+
+/* Glass-like frame that hosts both slide viewing modes. */
+.viewer {
+  position: relative;
+  width: min(100%, var(--card-max-width));
+  height: min(70vh, var(--card-max-height));
+  border-radius: 24px;
+  padding: clamp(16px, 2.8vw, 30px);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  border: 0.01px solid rgba(255, 255, 255, 0.000001);
+  box-shadow:
+    0 22px 55px rgba(0, 0, 0, 0.208),          /* outer shadow */
+    inset 0 0 0 0.001px rgba(255, 255, 255, 0.5); /* inner edge */
+}
+
+#card-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Overview mode: show all slides in a computed CSS grid. */
+#overview-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--overview-cols, 3), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--overview-rows, 2), minmax(0, 1fr));
+  gap: clamp(8px, 1vw, 14px);
+  overflow: hidden;
+  align-items: stretch;
+}
+
+/* Scroll mode viewport: shows horizontally moving film strip. */
+#scroll-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: none;
+}
+
+/* Mode switching: only one view is visible at a time. */
+.viewer.mode-overview #overview-grid {
+  display: grid;
+}
+
+.viewer.mode-overview #scroll-view {
+  display: none;
+}
+
+.viewer.mode-scroll #overview-grid {
+  display: none;
+}
+
+.viewer.mode-scroll #scroll-view {
+  display: block;
+}
+
+/* Sliding track that gets translated in JS every animation frame. */
+#strip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  display: flex;
+  gap: 14px;
+  will-change: transform;
+}
+
+/* Shared slide frame styling; ratio is injected via --ratio. */
+.frame {
+  margin: 0;
+  height: auto;
+  width: auto;
+  aspect-ratio: var(--ratio, 4 / 5);
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* Scroll-mode frames are larger and highlighted. */
+.viewer.mode-scroll .scroll-frame {
+  height: 100%;
+  min-width: clamp(190px, 24vw, 360px);
+  max-width: min(78vw, 460px);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0px 0px 3px rgba(255, 250, 216, 0.653));
+}
+
+/* Overview frames fill each grid cell. */
+.overview-frame {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  min-width: 0;
+  max-width: none;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* Slide image rendering defaults. */
+.frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: rgba(17, 17, 17, 0.8);
+}
+
+.scroll-frame img {
+  background: transparent;
+}
+
+/* Overview look: subdued and slightly blurry like thumbnails. */
+.viewer.mode-overview .overview-frame img {
+  object-fit: contain;
+  background: transparent;
+  opacity: 0.8;
+  filter: saturate(0.75) brightness(0.7) contrast(0.9) blur(0.5px);
+}
+
+/* Subtle projection glow while in scroll mode. */
+.viewer.mode-scroll #scroll-view {
+  background: radial-gradient(100% 100% at 50% 50%, rgba(129, 129, 129, 0.294), transparent 50%);
+}
+
+/* Invisible drag target placed over projector wheel area. */
+#dial {
+  position: absolute;
+  width: var(--wheel-size);
+  aspect-ratio: 1;
+  left: var(--wheel-x);
+  top: var(--wheel-y);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  touch-action: none;
+  pointer-events: auto;
+  cursor: grab;
+  z-index: 3;
+}
+
+/* Needle exists for optional visual rotation but is hidden here. */
+#needle {
+  display: none;
+}
+
+#dial:active {
+  cursor: grabbing;
+}
+
+/* Mobile layout: stack panels and resize viewer/projector. */
+@media (max-width: 880px) {
+  .stage {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  #projector-toggle {
+    justify-self: center;
+    max-width: 320px;
+  }
+
+  .projector-panel {
+    justify-items: center;
+  }
+
+  #projector-hint {
+    width: min(100%, 420px);
+  }
+
+  .viewer {
+    width: min(100%, var(--card-mobile-width));
+    height: min(70vh, var(--card-mobile-height));
+  }
+}
+</style>
+</head>
+<body>
+<!-- Stage: left projector control + right slide viewer -->
+<div class="stage">
+  <section class="projector-panel">
+    <!-- Clicking projector toggles between overview and scrolling playback -->
+    <button id="projector-toggle" type="button" aria-label="Toggle lights" aria-pressed="true">
+      <img src="slide projector.png" alt="Slide projector">
+      <!-- Drag this circular hitbox to drive strip motion/audio speed -->
+      <div id="dial" aria-label="Projector wheel control">
+        <div id="needle" aria-hidden="true"></div>
+      </div>
+    </button>
+    <p id="projector-hint">HDSD: Bật máy chiếu & nhấn giữ xoay theo chiều kim đồng hồ, và bật tiếng</p>
+  </section>
+
+  <!-- viewer starts in overview mode -->
+  <main class="viewer mode-overview" id="viewer">
+    <div id="card-content">
+      <div id="overview-grid" aria-label="Overview of all slides"></div>
+      <!-- Horizontal strip appears only in mode-scroll -->
+      <div id="scroll-view" aria-label="Scrolling slide view">
+        <div id="strip"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Narration/audio controlled by dial velocity -->
+<audio id="voice" src="audio.mp3" preload="auto"></audio>
+
+<script>
+// Core DOM references.
+const viewer = document.getElementById("viewer");
+const cardContent = document.getElementById("card-content");
+const overviewGrid = document.getElementById("overview-grid");
+const strip = document.getElementById("strip");
+const dial = document.getElementById("dial");
+const needle = document.getElementById("needle");
+const voice = document.getElementById("voice");
+const projectorToggle = document.getElementById("projector-toggle");
+
+// Runtime state for UI mode, drag lifecycle, and motion simulation.
+let lightsOn = true;
+let dragging = false;
+let angle = 0;
+let lastAngle = 0;
+let lastTime = 0;
+let angularVelocity = 0;
+let driveVelocity = 0;
+let stripVelocity = 0;
+let loopOffset = 0;
+let cycleWidth = 0;
+let baseFrameCount = 0;
+let audioUnlocked = false;
+let rewindAnchorTime = null;
+let resumeTimeSec = 0;
+let playDirectionSign = 0;
+let suppressProjectorClick = false;
+
+// Source list used for both overview thumbnails and scroll strip frames.
+const SLIDES = [
+  // { src: "photos/mounted/36.png"},
+  // { src: "photos/mounted/35.png"},
+  // { src: "photos/mounted/34.png"},
+  // { src: "photos/mounted/33.png"},
+  // { src: "photos/mounted/32.png"},
+  // { src: "photos/mounted/31.png"},
+  // { src: "photos/mounted/30.png"},
+  // { src: "photos/mounted/29.png"},
+  // { src: "photos/mounted/28.png"},
+  // { src: "photos/mounted/27.png"},
+  // { src: "photos/mounted/26.png"},
+  // { src: "photos/mounted/25.png"},
+  // { src: "photos/mounted/24.png"},
+  // { src: "photos/mounted/23.png"},
+  // { src: "photos/mounted/22.png"},
+  // { src: "photos/mounted/21.png"},
+  // { src: "photos/mounted/20.png"},
+  // { src: "photos/mounted/19.png"},
+  // { src: "photos/mounted/18.png"},
+  { src: "photos/mounted/17.png"},
+  { src: "photos/mounted/16.png"},
+  { src: "photos/mounted/15.png"},
+  { src: "photos/mounted/14.png"},
+  { src: "photos/mounted/13.png"},
+  { src: "photos/mounted/12.png"},
+  { src: "photos/mounted/11.png"},
+  { src: "photos/mounted/10.png"},
+  { src: "photos/mounted/9.png"},
+  { src: "photos/mounted/8.png"},
+  { src: "photos/mounted/7.png"},
+  { src: "photos/mounted/6.png"},
+  { src: "photos/mounted/5.png"},
+  { src: "photos/mounted/4.png"},
+  { src: "photos/mounted/3.png"},
+  { src: "photos/mounted/2.png"},
+  { src: "photos/mounted/1.png"},
+];
+
+// Tuning constants for interaction feel and audio sync behavior.
+const dragSensitivity = 10;
+const stripSmoothing = 0.12;
+const friction = 0.2;
+const minVelocity = 0.00005;
+const playVelocityThreshold = 0.00002;
+const rewindScale = 0.45;
+const maxRewindPerGestureSec = 4;
+const minResumeTimeSec = 0.2;
+const needleResistance = 0.99;
+
+/*
+  Inputs: value (number), min (number), max (number).
+  Output: the same number clamped to the inclusive range [min, max].
+  Side effects: none (pure helper).
+*/
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+/*
+  Inputs: none (reads current DOM box for #dial).
+  Output: object { x, y } for wheel center in viewport pixels.
+  Side effects: reads layout via getBoundingClientRect().
+*/
+function getDialCenter() {
+  const rect = dial.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+/*
+  Inputs: x, y pointer coordinates in viewport pixels.
+  Output: angle in radians around wheel center from -PI to PI.
+  Side effects: calls getDialCenter(), which reads layout.
+*/
+function pointerToAngle(x, y) {
+  const center = getDialCenter();
+  return Math.atan2(y - center.y, x - center.x);
+}
+
+/*
+  Inputs: delta angle in radians.
+  Output: equivalent delta normalized to the shortest turn path.
+  Side effects: none (pure helper).
+*/
+function normalizeDelta(delta) {
+  if (delta > Math.PI) return delta - Math.PI * 2;
+  if (delta < -Math.PI) return delta + Math.PI * 2;
+  return delta;
+}
+
+/*
+  Inputs: none (uses global cycleWidth).
+  Output: object { min, max } describing wrap bounds for strip offset.
+  Side effects: none.
+*/
+function getScrollBounds() {
+  return { min: 0, max: Math.max(1, cycleWidth) };
+}
+
+/*
+  Inputs: none (uses global angle state).
+  Output: none.
+  Side effects: writes CSS transform on #needle.
+*/
+function updateNeedle() {
+  const deg = angle * 180 / Math.PI;
+  needle.style.transform = "translate(-50%, -100%) rotate(" + deg + "deg)";
+}
+
+/*
+  Inputs: none (uses global loopOffset + cycleWidth).
+  Output: none.
+  Side effects: normalizes loopOffset and writes transform on #strip.
+*/
+function updateStrip() {
+  const bounds = getScrollBounds();
+  const span = bounds.max;
+  loopOffset = ((loopOffset % span) + span) % span;
+  strip.style.transform = "translateX(" + (-loopOffset) + "px)";
+}
+
+/*
+  Inputs: none.
+  Output: none.
+  Side effects: attempts voice.play() and swallows rejected play promises.
+*/
+function tryPlayAudio() {
+  const playPromise = voice.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch(() => {});
+  }
+}
+
+/*
+  Inputs: none.
+  Output: none.
+  Side effects: briefly mutes/plays/pauses audio and flips audioUnlocked=true.
+*/
+function unlockAudioOnce() {
+  if (audioUnlocked) return;
+  const wasMuted = voice.muted;
+  voice.muted = true;
+  const playPromise = voice.play();
+  if (playPromise && typeof playPromise.then === "function") {
+    playPromise.then(() => {
+      voice.pause();
+      voice.muted = wasMuted;
+      audioUnlocked = true;
+    }).catch(() => {});
+  } else {
+    voice.pause();
+    voice.muted = wasMuted;
+    audioUnlocked = true;
+  }
+}
+
+/*
+  Inputs: v (velocity), dtMs (frame delta ms), lowerBound (minimum seek time).
+  Output: none.
+  Side effects: seeks voice.currentTime and updates resumeTimeSec.
+*/
+function scrubAudioByVelocity(v, dtMs, lowerBound = 0) {
+  if (!isFinite(voice.duration) || voice.duration <= 0) return;
+  const deltaSec = (v * dtMs) * rewindScale;
+  const maxTime = Math.max(minResumeTimeSec, voice.duration - 0.02);
+  const nextTime = clamp(voice.currentTime + deltaSec, lowerBound, maxTime);
+  voice.currentTime = nextTime;
+  resumeTimeSec = nextTime;
+}
+
+/*
+  Inputs: playbackVelocity (signed wheel speed), dtMs (elapsed ms).
+  Output: none.
+  Side effects: pauses/plays audio, adjusts volume, scrubs, updates resume and rewind anchors.
+*/
+function syncAudio(playbackVelocity, dtMs) {
+  if (lightsOn) {
+    voice.pause();
+    return;
+  }
+
+  if (playDirectionSign === 0 && Math.abs(playbackVelocity) > playVelocityThreshold) {
+    playDirectionSign = Math.sign(playbackVelocity) || 1;
+  }
+
+  const normalizedVelocity = playbackVelocity * (playDirectionSign || 1);
+
+  if (normalizedVelocity > playVelocityThreshold) {
+    rewindAnchorTime = null;
+    tryPlayAudio();
+    const targetVolume = clamp(Math.abs(normalizedVelocity) * 1200, 0.08, 1);
+    voice.volume += (targetVolume - voice.volume) * 0.18;
+  } else if (normalizedVelocity < -playVelocityThreshold) {
+    voice.pause();
+    if (rewindAnchorTime === null) {
+      rewindAnchorTime = resumeTimeSec || voice.currentTime;
+    }
+    const lowerBound = clamp(
+      rewindAnchorTime - maxRewindPerGestureSec,
+      minResumeTimeSec,
+      isFinite(voice.duration) && voice.duration > 0 ? voice.duration : minResumeTimeSec
+    );
+    scrubAudioByVelocity(normalizedVelocity, dtMs, lowerBound);
+  } else {
+    rewindAnchorTime = null;
+    if (isFinite(voice.currentTime)) {
+      resumeTimeSec = voice.currentTime;
+    }
+  }
+}
+
+// Begin drag gesture and capture pointer for stable move events.
+dial.addEventListener("pointerdown", (event) => {
+  if (lightsOn) return;
+  unlockAudioOnce();
+  event.preventDefault();
+  event.stopPropagation();
+
+  dragging = true;
+  lastAngle = pointerToAngle(event.clientX, event.clientY);
+  lastTime = performance.now();
+  dial.setPointerCapture(event.pointerId);
+});
+
+// Drive angle/velocity updates from pointer movement.
+dial.addEventListener("pointermove", (event) => {
+  if (!dragging || lightsOn) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const now = performance.now();
+  const dt = Math.max(8, now - lastTime);
+  const nextAngle = pointerToAngle(event.clientX, event.clientY);
+  const delta = normalizeDelta(nextAngle - lastAngle) * needleResistance;
+  if (Math.abs(delta) > 0.0008) {
+    suppressProjectorClick = true;
+  }
+
+  angle += delta;
+  angularVelocity = delta / dt;
+  driveVelocity = -angularVelocity;
+
+  updateNeedle();
+  syncAudio(driveVelocity, dt);
+
+  lastAngle = nextAngle;
+  lastTime = now;
+});
+
+/*
+  Inputs: pointer event (may contain pointerId).
+  Output: none.
+  Side effects: ends drag state and releases pointer capture on #dial.
+*/
+function endDrag(event) {
+  if (!dragging) return;
+  dragging = false;
+  if (typeof event.pointerId === "number") {
+    dial.releasePointerCapture(event.pointerId);
+  }
+}
+
+dial.addEventListener("pointerup", endDrag);
+dial.addEventListener("pointerleave", endDrag);
+dial.addEventListener("pointercancel", endDrag);
+dial.addEventListener("lostpointercapture", () => { dragging = false; });
+// If user actually dragged wheel, consume click to avoid toggling projector.
+dial.addEventListener("click", (event) => {
+  if (suppressProjectorClick) {
+    event.stopPropagation();
+    event.preventDefault();
+    suppressProjectorClick = false;
+  }
+});
+
+// Projector button switches between overview and scroll modes.
+projectorToggle.addEventListener("click", () => {
+  setLightsState(!lightsOn);
+});
+
+/*
+  Inputs: nextOn (boolean) indicating whether lights/overview should be on.
+  Output: none.
+  Side effects: toggles classes/ARIA, resets motion state, pauses audio, recalculates layout.
+*/
+function setLightsState(nextOn) {
+  lightsOn = nextOn;
+  viewer.classList.toggle("mode-overview", lightsOn);
+  viewer.classList.toggle("mode-scroll", !lightsOn);
+  document.body.classList.toggle("lights-on", lightsOn);
+  projectorToggle.classList.toggle("is-on", lightsOn);
+  projectorToggle.setAttribute("aria-pressed", String(lightsOn));
+  layoutOverviewGrid();
+
+  if (lightsOn) {
+    dragging = false;
+    angularVelocity = 0;
+    driveVelocity = 0;
+    stripVelocity = 0;
+    rewindAnchorTime = null;
+    playDirectionSign = 0;
+    if (isFinite(voice.currentTime)) {
+      resumeTimeSec = voice.currentTime;
+    }
+    voice.pause();
+  } else {
+    requestAnimationFrame(() => {
+      recalcCycleWidth();
+      updateStrip();
+    });
+  }
+}
+
+/*
+  Inputs: none (called recursively by requestAnimationFrame).
+  Output: none.
+  Side effects: advances physics state, syncs audio, moves strip, schedules next frame.
+*/
+function animate() {
+  const dt = 16;
+
+  if (!dragging && !lightsOn) {
+    angularVelocity *= friction;
+    if (Math.abs(angularVelocity) < minVelocity) angularVelocity = 0;
+    driveVelocity = -angularVelocity;
+
+    if (driveVelocity !== 0) {
+      angle += angularVelocity * dt;
+      updateNeedle();
+      syncAudio(driveVelocity, dt);
+    } else if (!voice.paused) {
+      voice.pause();
+    }
+  }
+
+  if (lightsOn) {
+    driveVelocity = 0;
+  }
+
+  const targetVelocity = !lightsOn ? driveVelocity : 0;
+  stripVelocity += (targetVelocity - stripVelocity) * stripSmoothing;
+  if (Math.abs(stripVelocity) < minVelocity) stripVelocity = 0;
+  loopOffset += stripVelocity * dt * dragSensitivity;
+  updateStrip();
+
+  requestAnimationFrame(animate);
+}
+
+// Clamp resume point once metadata reveals real audio duration.
+voice.addEventListener("loadedmetadata", () => {
+  if (!isFinite(voice.duration) || voice.duration <= 0) return;
+  resumeTimeSec = clamp(resumeTimeSec || minResumeTimeSec, minResumeTimeSec, Math.max(minResumeTimeSec, voice.duration - 0.02));
+});
+
+// Fallback audio file if primary source fails to load.
+voice.addEventListener("error", () => {
+  const src = voice.getAttribute("src") || "";
+  if (!src.includes("audio - Copy.mp3")) {
+    voice.setAttribute("src", "audio - Copy.mp3");
+    voice.load();
+    audioUnlocked = false;
+    playDirectionSign = 0;
+  }
+});
+
+// Keep resume time synced during playback.
+voice.addEventListener("timeupdate", () => {
+  if (isFinite(voice.currentTime) && !voice.seeking) {
+    resumeTimeSec = voice.currentTime;
+  }
+});
+
+/*
+  Inputs: frame element containing an <img>.
+  Output: none.
+  Side effects: sets --ratio on frame and triggers layout/strip recalculation when image loads.
+*/
+function bindFrameRatio(frame) {
+  const img = frame.querySelector("img");
+  if (!img) return;
+  const applyRatio = () => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    frame.style.setProperty("--ratio", String(ratio));
+    layoutOverviewGrid();
+    recalcCycleWidth();
+    updateStrip();
+  };
+  if (img.complete) applyRatio();
+  img.addEventListener("load", applyRatio, { once: true });
+}
+
+/*
+  Inputs: slide object ({src, alt?}), extraClass string for mode-specific styling.
+  Output: a <figure> DOM element containing an <img>.
+  Side effects: creates new DOM nodes (no global mutations until appended).
+*/
+function createFrame(slide, extraClass) {
+  const figure = document.createElement("figure");
+  figure.className = "frame " + extraClass;
+
+  const img = document.createElement("img");
+  img.src = slide.src;
+  img.alt = slide.alt || "";
+  figure.appendChild(img);
+
+  return figure;
+}
+
+/*
+  Inputs: none (uses global SLIDES).
+  Output: none.
+  Side effects: clears and repopulates #overview-grid and #strip with frame nodes.
+*/
+function renderSlides() {
+  overviewGrid.innerHTML = "";
+  strip.innerHTML = "";
+
+  SLIDES.forEach((slide) => {
+    overviewGrid.appendChild(createFrame(slide, "overview-frame"));
+    strip.appendChild(createFrame(slide, "scroll-frame"));
+  });
+}
+
+/*
+  Inputs: none (reads card size + number of overview frames).
+  Output: none.
+  Side effects: updates CSS vars --overview-cols/--overview-rows on #overview-grid.
+*/
+function layoutOverviewGrid() {
+  const count = overviewGrid.children.length;
+  if (!count) return;
+
+  const width = Math.max(1, cardContent.clientWidth);
+  const height = Math.max(1, cardContent.clientHeight);
+  const containerRatio = width / height;
+
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count * containerRatio * 0.6)));
+  const rows = Math.max(1, Math.ceil(count / cols));
+
+  overviewGrid.style.setProperty("--overview-cols", String(cols));
+  overviewGrid.style.setProperty("--overview-rows", String(rows));
+}
+
+/*
+  Inputs: none (uses current #strip children as originals).
+  Output: none.
+  Side effects: clones frames into strip, stores baseFrameCount, binds ratio listeners.
+*/
+function initLoopStrip() {
+  const originals = Array.from(strip.children);
+  baseFrameCount = originals.length;
+  if (baseFrameCount === 0) return;
+
+  recalcCycleWidth();
+
+  const cloneBatch = originals.map((el) => el.cloneNode(true));
+  cloneBatch.forEach((el) => strip.appendChild(el));
+
+  Array.from(document.querySelectorAll(".frame")).forEach(bindFrameRatio);
+}
+
+/*
+  Inputs: none.
+  Output: none.
+  Side effects: measures DOM widths and updates global cycleWidth.
+*/
+function recalcCycleWidth() {
+  const originals = Array.from(strip.children).slice(0, baseFrameCount || strip.children.length);
+  const count = originals.length;
+  const gap = parseFloat(getComputedStyle(strip).gap) || 0;
+  cycleWidth = originals.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) + Math.max(0, count - 1) * gap;
+}
+
+// Keep layout and strip metrics valid after viewport changes.
+window.addEventListener("resize", () => {
+  layoutOverviewGrid();
+  recalcCycleWidth();
+  updateStrip();
+});
+
+// Boot sequence.
+renderSlides();
+initLoopStrip();
+window.addEventListener("load", () => {
+  layoutOverviewGrid();
+  recalcCycleWidth();
+  updateStrip();
+});
+setLightsState(lightsOn);
+updateNeedle();
+updateStrip();
+animate();
+</script>
+</body>
+</html>
